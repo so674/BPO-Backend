@@ -1,6 +1,6 @@
 import mysql from "mysql2/promise";
 import "dotenv/config";
-
+import dotenv from 'dotenv';
 // One shared connection pool for the whole app.
 export const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -45,3 +45,20 @@ export async function withTransaction(fn) {
     conn.release();
   }
 }
+dotenv.config();
+
+// Update src/config/db.js to handle cloud SSL connections and limit connection exhaustion during serverless function bursts
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || 'bpo_attendance',
+  waitForConnections: true,
+  connectionLimit: 5, // Capped low specifically for Vercel serverless execution
+  queueLimit: 0,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
+
+export default pool;

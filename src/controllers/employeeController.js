@@ -57,15 +57,36 @@ export async function listEmployees(req, res) {
 }
 
 export async function getEmployee(req, res) {
-  const { rows } = await query(
-    `SELECT e.*, d.name AS department_name, s.name AS shift_name
-     FROM employees e
-     LEFT JOIN departments d ON d.id = e.department_id
-     LEFT JOIN shifts s ON s.id = e.shift_id
-     WHERE e.id = ?`,
-    [req.params.id],
-  );
-  if (!rows[0]) throw new ApiError(404, "Employee not found");
+  const { role, employeeId } = req.user;
+
+  let sql = `
+    SELECT
+      e.*,
+      d.name AS department_name,
+      s.name AS shift_name
+    FROM employees e
+    LEFT JOIN departments d
+      ON d.id = e.department_id
+    LEFT JOIN shifts s
+      ON s.id = e.shift_id
+    WHERE e.id = ?
+  `;
+
+  const params = [req.params.id];
+
+  // Managers can only view employees
+  // who report directly to them.
+  if (role === "MANAGER") {
+    sql += ` AND e.manager_id = ?`;
+    params.push(employeeId);
+  }
+
+  const { rows } = await query(sql, params);
+
+  if (!rows[0]) {
+    throw new ApiError(404, "Employee not found");
+  }
+
   res.json(mapRow(rows[0]));
 }
 

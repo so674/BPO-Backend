@@ -69,18 +69,35 @@ ALTER TABLE users
 -- ────────────────────────────────────────────────────────────────
 -- RFID Cards (Section 11.3, Section 17 lifecycle)
 -- ────────────────────────────────────────────────────────────────
-CREATE TABLE rfid_cards (
+
+-- CREATE TABLE rfid_cards (
+--   id              CHAR(36) PRIMARY KEY,
+--   card_uid        VARCHAR(100) NOT NULL UNIQUE,
+--   employee_id     CHAR(36),
+--   status          ENUM('UNASSIGNED', 'ACTIVE', 'BLOCKED', 'RETIRED') NOT NULL DEFAULT 'UNASSIGNED',
+--   assigned_at     TIMESTAMP NULL,
+--   activated_at    TIMESTAMP NULL,
+--   blocked_at      TIMESTAMP NULL,
+--   replaced_at     TIMESTAMP NULL,
+--   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+--   CONSTRAINT fk_cards_employee FOREIGN KEY (employee_id) REFERENCES employees(id)
+-- );
+
+-- chenge the code 01/09/2026
+CREATE TABLE rfid_devices (
   id              CHAR(36) PRIMARY KEY,
-  card_uid        VARCHAR(100) NOT NULL UNIQUE,
-  employee_id     CHAR(36),
-  status          ENUM('UNASSIGNED', 'ACTIVE', 'BLOCKED', 'RETIRED') NOT NULL DEFAULT 'UNASSIGNED',
-  assigned_at     TIMESTAMP NULL,
-  activated_at    TIMESTAMP NULL,
-  blocked_at      TIMESTAMP NULL,
-  replaced_at     TIMESTAMP NULL,
+  device_code     VARCHAR(50) NOT NULL UNIQUE,
+  device_name     VARCHAR(255) NOT NULL,
+  location        VARCHAR(255),
+  device_type     ENUM('ENTRY', 'EXIT') NOT NULL,
+
+  api_key_hash    VARCHAR(255) NOT NULL UNIQUE,
+
+  status          ENUM('ONLINE', 'OFFLINE', 'WARNING') NOT NULL DEFAULT 'ONLINE',
+  last_seen_at    TIMESTAMP NULL,
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_cards_employee FOREIGN KEY (employee_id) REFERENCES employees(id)
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ────────────────────────────────────────────────────────────────
@@ -172,7 +189,31 @@ CREATE TABLE audit_logs (
   timestamp       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_audit_actor FOREIGN KEY (actor_user_id) REFERENCES users(id)
 );
+-- 11. LEAVES TABLE
+CREATE TABLE IF NOT EXISTS leaves (
+  id VARCHAR(36) PRIMARY KEY,
+  employee_id VARCHAR(36) NOT NULL,
+  leave_type ENUM('CASUAL', 'SICK', 'EARNED', 'UNPAID') NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  reason TEXT,
+  status ENUM('PENDING', 'APPROVED', 'REJECTED') DEFAULT 'PENDING',
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  approved_by VARCHAR(36),
+  approved_at TIMESTAMP NULL,
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+);
 
+-- . BIOMETRIC DATA TABLE // 04/09/2026 
+CREATE TABLE IF NOT EXISTS biometric_data (
+  id VARCHAR(36) PRIMARY KEY,
+  employee_id VARCHAR(36) NOT NULL,
+  biometric_type ENUM('FINGERPRINT', 'FACE', 'IRIS') NOT NULL,
+  reference_id VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+);
 -- ────────────────────────────────────────────────────────────────
 -- Indexes
 -- ────────────────────────────────────────────────────────────────

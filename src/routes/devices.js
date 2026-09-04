@@ -5,7 +5,7 @@ import { listDevices, registerDevice, getDeviceHealth } from "../controllers/dev
 const router = Router();
 router.use(requireAuth);
 
-router.get("/", requireRole("HR", "MANAGER", "CEO"), listDevices);
+router.get("/", requireRole("HR", "CEO"), listDevices);
 router.get("/health", requireRole("HR"), getDeviceHealth);
 router.post("/", requireRole("HR"), registerDevice);
 
