@@ -1,17 +1,6 @@
 import mysql from "mysql2/promise";
 import "dotenv/config";
 import dotenv from 'dotenv';
-// One shared connection pool for the whole app.
-export const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  dateStrings: false,
-});
 
 // Query helper — matches the shape controllers use: query(sql, params) -> rows
 // mysql2 returns [rows, fields]; we only ever need rows, wrapped to look like { rows }

@@ -6,47 +6,29 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
   ingestEvent,
   listEvents,
-} from "../controllers/eventController.js";
+} from "../controllers/eventController.js"; // Ensure path matches your controller filename
 
 const router = Router();
-
 
 // ============================================================
 // RFID DEVICE ENDPOINT
 // ============================================================
-//
-// RFID readers / adapters authenticate using:
-// X-Device-API-Key
-//
-// They NEVER use a human JWT.
-//
-// Example:
-//
-// POST /attendance-events
-// X-Device-API-Key: <DEVICE_API_KEY>
-//
-// ============================================================
+router.post(
+  "/ingest",
+  // requireDeviceAuth,
+  ingestEvent
+);
 
+// Alias in case devices hit root POST /api/attendance-events
 router.post(
   "/",
   requireDeviceAuth,
-  ingestEvent,
+  ingestEvent
 );
-
 
 // ============================================================
 // HUMAN USER ENDPOINT
 // ============================================================
-//
-// HR       → can view all events
-// MANAGER  → can view team/own events
-// CEO      → can view all events
-// EMPLOYEE → can view own events
-//
-// listEvents() applies the detailed employee/team
-// filtering based on req.user.
-// ============================================================
-
 router.get(
   "/",
   requireAuth,
@@ -54,10 +36,9 @@ router.get(
     "HR",
     "EMPLOYEE",
     "MANAGER",
-    "CEO",
+    "CEO"
   ),
-  listEvents,
+  listEvents
 );
-
 
 export default router;

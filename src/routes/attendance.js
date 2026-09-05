@@ -1,11 +1,25 @@
 import { Router } from "express";
+import {
+  checkIn,
+  checkOut,
+  listAttendance,
+  getTodayAttendance,
+  getAttendanceByEmployee,
+  getAttendanceById,
+  dailySummary,
+} from "../controllers/attendanceController.js";
 import { requireAuth } from "../middleware/auth.js";
-import { listAttendance, dailySummary } from "../controllers/attendanceController.js";
 
 const router = Router();
-router.use(requireAuth); // all four roles can read attendance, scoped by controller logic
 
+router.use(requireAuth);
+
+router.post("/check-in", checkIn);
+router.post("/check-out", checkOut);
 router.get("/", listAttendance);
-router.get("/summary", dailySummary);
+router.get("/today", getTodayAttendance);
+router.get("/summary/daily", dailySummary);
+router.get("/employee/:id", getAttendanceByEmployee);
+router.get("/:id", getAttendanceById);
 
 export default router;

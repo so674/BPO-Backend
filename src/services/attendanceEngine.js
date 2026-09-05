@@ -217,17 +217,23 @@ export async function processAttendanceEvent(
   // ------------------------------------------------------------
   // Load today's attendance record
   // ------------------------------------------------------------
-
+//to calculate the nigt=ht shift and if the employee forget to punchout after 9 hours complete it automatic say missing employee.
+//calculate shif //(04/09/2026)
   const { rows: existing } =
     await client.query(
       `SELECT *
        FROM attendance_records
-       WHERE employee_id = ?
-         AND attendance_date = ?
+       WHERE employee_id = ?       
+         AND punch_out IS NULL
+         AND punch_in >= DATE_SUB(? , INTERVAL 16 HOURS) 
+      ORDER BY punch_in DESC
+      LIMIT 1   
+         
        FOR UPDATE`,
       [
         employeeId,
-        attendanceDate,
+        // attendanceDate,
+        eventTimestamp
       ],
     );
 
@@ -333,63 +339,67 @@ export async function processAttendanceEvent(
   // ============================================================
 
   if (eventType === "PUNCH_OUT") {
+  // 1. Search for an open shift within the 16-hour lookback window 🔍
+  const [existing] = await client.query(
+    `SELECT *
+     FROM attendance_records
+     WHERE employee_id = ?
+       AND punch_out IS NULL
+       AND punch_in >= DATE_SUB(?, INTERVAL 16 HOUR)
+     ORDER BY punch_in DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [employeeId, eventTimestamp]
+  );
 
-    // ----------------------------------------------------------
-    // Valid punch-out:
-    //
-    // punch-in exists
-    // AND
-    // punch-out doesn't already exist
-    // ----------------------------------------------------------
+  let record = existing[0];
 
-    if (
-      record.punch_in &&
-      !record.punch_out
-    ) {
+  if (record) {
+    // 2A. Matched Shift: Calculate working minutes and UPDATE existing record ⏱️
+    const workingMinutes = calculateWorkingMinutes(
+      record.punch_in,
+      eventTimestamp
+    );
 
-      const workingMinutes =
-        calculateWorkingMinutes(
-          record.punch_in,
-          eventTimestamp,
-        );
+    await client.query(
+      `UPDATE attendance_records
+       SET
+         punch_out = ?,
+         working_minutes = ?,
+         status = CASE WHEN status = 'LATE' THEN 'LATE' ELSE 'PRESENT' END,
+         updated_at = NOW()
+       WHERE id = ?`,
+      [formatDateTime(eventTimestamp), workingMinutes, record.id]
+    );
 
-      await client.query(
-        `UPDATE attendance_records
-         SET
-           punch_out = ?,
-           working_minutes = ?,
-           updated_at = NOW()
-         WHERE id = ?`,
-        [
-          formatDateTime(eventTimestamp),
-          workingMinutes,
-          record.id,
-        ],
-      );
+    const [updated] = await client.query(
+      `SELECT * FROM attendance_records WHERE id = ?`,
+      [record.id]
+    );
+    record = updated[0];
 
-      const { rows: updated } =
-        await client.query(
-          `SELECT *
-           FROM attendance_records
-           WHERE id = ?`,
-          [record.id],
-        );
+  } else {
+    // 2B. Orphan Check-out: Create a flagged MISSING_PUNCH record 🚩
+    const newRecordId = crypto.randomUUID();
 
-      record = updated[0];
-    }
+    await client.query(
+      `INSERT INTO attendance_records (
+         id,
+         employee_id,
+         attendance_date,
+         punch_in,
+         punch_out,
+         working_minutes,
+         status
+       ) VALUES (?, ?, ?, NULL, ?, 0, 'MISSING_PUNCH')`,
+      [newRecordId, employeeId, attendanceDate, formatDateTime(eventTimestamp)]
+    );
 
-    // ----------------------------------------------------------
-    // If there is no punch-in:
-    //
-    // Keep the RFID event as evidence, but don't create a
-    // valid punch-out in attendance_records.
-    // ----------------------------------------------------------
-
-    // ----------------------------------------------------------
-    // If punch-out already exists:
-    //
-    // Ignore duplicate punch-out.
-    // ----------------------------------------------------------
+    const [inserted] = await client.query(
+      `SELECT * FROM attendance_records WHERE id = ?`,
+      [newRecordId]
+    );
+    record = inserted[0];
   }
 
   return record;
@@ -492,16 +502,14 @@ function calculateWorkingMinutes(
     return 0;
   }
 
-  const difference =
-    outTime.getTime() -
-    inTime.getTime();
+ const difference = outTime.getTime() - inTime.getTime();
 
-  return Math.max(
-    0,
-    Math.round(
-      difference / 60000,
-    ),
-  );
+return Math.max(
+  0,
+  Math.round(
+    difference / 60000,
+  ),
+);
 }
 
 
@@ -643,4 +651,5 @@ function calculateLateness(
     late: false,
     lateMinutes: 0,
   };
+}
 }
