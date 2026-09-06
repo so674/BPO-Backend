@@ -26,34 +26,68 @@ function jsonToCsv(data) {
   return csvRows.join("\n");
 }
 
+const mapDailyRow = (r) => ({
+  employeeId: r.employee_id,
+  employeeCode: r.employee_code || "—",
+  employeeName: r.employee_name || "Unknown",
+  departmentName: r.department_name || "Unassigned",
+  punchIn: r.punch_in ? new Date(r.punch_in).toISOString() : null,
+  punchOut: r.punch_out ? new Date(r.punch_out).toISOString() : null,
+  status: r.status || "ABSENT",
+});
+
+const mapMonthlyRow = (r) => ({
+  employeeId: r.employee_id,
+  employeeCode: r.employee_code || "—",
+  employeeName: r.employee_name || "Unknown",
+  departmentName: r.department_name || "Unassigned",
+  daysPresent: Number(r.days_present || 0),
+  lateCount: Number(r.late_count || 0),
+  absentCount: Number(r.absent_count || 0),
+  totalWorkingMinutes: Number(r.total_working_minutes || 0),
+});
+
 // 1. GET /api/reports/daily - Daily Attendance Audit
 export async function getDailyReport(req, res) {
   try {
     const { date } = req.query;
+    const { role, employeeId } = req.user || {};
     const targetDate = date || new Date().toISOString().split("T")[0];
 
-    // Simplified daily audit query
-    const sql = `
+    let sql = `
       SELECT 
         e.id AS employee_id,
-        COALESCE(CONCAT(e.first_name, ' ', e.last_name), e.id) AS employee_name,
-        COALESCE(e.department, 'N/A') AS department,
-        a.check_in,
-        a.check_out,
-        COALESCE(a.status, 'ABSENT') AS status
+        e.employee_code,
+        CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+        d.name AS department_name,
+        ar.punch_in,
+        ar.punch_out,
+        COALESCE(ar.status, 'ABSENT') AS status
       FROM employees e
-      LEFT JOIN attendance a ON e.id = a.employee_id AND DATE(a.check_in) = ?
-      ORDER BY e.first_name
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN attendance_records ar ON e.id = ar.employee_id AND ar.attendance_date = ?
     `;
 
-    const result = await query(sql, [targetDate]);
+    const conditions = [];
+    const params = [targetDate];
+
+    // Filter by team if requested by a Manager
+    if (role === "MANAGER") {
+      conditions.push("(e.manager_id = ? OR e.id = ?)");
+      params.push(employeeId, employeeId);
+    }
+
+    if (conditions.length > 0) {
+      sql += " WHERE " + conditions.join(" AND ");
+    }
+
+    sql += " ORDER BY e.first_name ASC";
+
+    const result = await query(sql, params);
     const rows = getRows(result);
 
-    res.json({
-      date: targetDate,
-      totalEmployees: rows.length,
-      records: rows,
-    });
+    // 🟢 Returns flat array directly
+    res.json(rows.map(mapDailyRow));
   } catch (err) {
     console.error("Daily Report Error:", err);
     res.status(500).json({ error: err.message || "Failed to generate daily report" });
@@ -64,30 +98,46 @@ export async function getDailyReport(req, res) {
 export async function getMonthlySummary(req, res) {
   try {
     const { month, year } = req.query;
+    const { role, employeeId } = req.user || {};
     const currentYear = Number(year) || new Date().getFullYear();
     const currentMonth = Number(month) || new Date().getMonth() + 1;
 
-    const sql = `
+    let sql = `
       SELECT 
         e.id AS employee_id,
-        COALESCE(CONCAT(e.first_name, ' ', e.last_name), e.id) AS full_name,
-        COALESCE(e.department, 'N/A') AS department,
-        COUNT(DISTINCT DATE(a.check_in)) AS days_present,
-        SUM(CASE WHEN a.status = 'LATE' THEN 1 ELSE 0 END) AS late_count
+        e.employee_code,
+        CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+        d.name AS department_name,
+        COUNT(DISTINCT CASE WHEN ar.status IN ('PRESENT', 'LATE', 'CORRECTED') THEN ar.attendance_date END) AS days_present,
+        SUM(CASE WHEN ar.status = 'LATE' THEN 1 ELSE 0 END) AS late_count,
+        SUM(CASE WHEN ar.status = 'ABSENT' THEN 1 ELSE 0 END) AS absent_count,
+        COALESCE(SUM(ar.working_minutes), 0) AS total_working_minutes
       FROM employees e
-      LEFT JOIN attendance a ON e.id = a.employee_id 
-        AND MONTH(a.check_in) = ? AND YEAR(a.check_in) = ?
-      GROUP BY e.id, e.first_name, e.last_name, e.department
-      ORDER BY full_name
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN attendance_records ar ON e.id = ar.employee_id 
+        AND MONTH(ar.attendance_date) = ? AND YEAR(ar.attendance_date) = ?
     `;
 
-    const result = await query(sql, [currentMonth, currentYear]);
+    const conditions = [];
+    const params = [currentMonth, currentYear];
 
-    res.json({
-      month: currentMonth,
-      year: currentYear,
-      summary: getRows(result),
-    });
+    // Filter by team if requested by a Manager
+    if (role === "MANAGER") {
+      conditions.push("(e.manager_id = ? OR e.id = ?)");
+      params.push(employeeId, employeeId);
+    }
+
+    if (conditions.length > 0) {
+      sql += " WHERE " + conditions.join(" AND ");
+    }
+
+    sql += " GROUP BY e.id, e.employee_code, e.first_name, e.last_name, d.name ORDER BY e.first_name ASC";
+
+    const result = await query(sql, params);
+    const rows = getRows(result);
+
+    // 🟢 Returns flat array directly
+    res.json(rows.map(mapMonthlyRow));
   } catch (err) {
     console.error("Monthly Summary Error:", err);
     res.status(500).json({ error: err.message || "Failed to generate monthly summary" });
@@ -98,22 +148,38 @@ export async function getMonthlySummary(req, res) {
 export async function exportCsvReport(req, res) {
   try {
     const { date } = req.query;
+    const { role, employeeId } = req.user || {};
     const targetDate = date || new Date().toISOString().split("T")[0];
 
-    const sql = `
+    let sql = `
       SELECT 
         e.id AS 'Employee ID',
-        COALESCE(CONCAT(e.first_name, ' ', e.last_name), e.id) AS 'Employee Name',
-        COALESCE(e.department, 'N/A') AS 'Department',
-        COALESCE(a.check_in, 'N/A') AS 'Check In',
-        COALESCE(a.check_out, 'N/A') AS 'Check Out',
-        COALESCE(a.status, 'ABSENT') AS 'Status'
+        e.employee_code AS 'Employee Code',
+        CONCAT(e.first_name, ' ', e.last_name) AS 'Employee Name',
+        COALESCE(d.name, 'N/A') AS 'Department',
+        COALESCE(ar.punch_in, 'N/A') AS 'Punch In',
+        COALESCE(ar.punch_out, 'N/A') AS 'Punch Out',
+        COALESCE(ar.status, 'ABSENT') AS 'Status'
       FROM employees e
-      LEFT JOIN attendance a ON e.id = a.employee_id AND DATE(a.check_in) = ?
-      ORDER BY e.first_name
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN attendance_records ar ON e.id = ar.employee_id AND ar.attendance_date = ?
     `;
 
-    const result = await query(sql, [targetDate]);
+    const conditions = [];
+    const params = [targetDate];
+
+    if (role === "MANAGER") {
+      conditions.push("(e.manager_id = ? OR e.id = ?)");
+      params.push(employeeId, employeeId);
+    }
+
+    if (conditions.length > 0) {
+      sql += " WHERE " + conditions.join(" AND ");
+    }
+
+    sql += " ORDER BY e.first_name ASC";
+
+    const result = await query(sql, params);
     const rows = getRows(result);
     const csvData = jsonToCsv(rows);
 

@@ -78,17 +78,13 @@ CREATE TABLE IF NOT EXISTS rfid_cards (
 -- ────────────────────────────────────────────────────────────────
 -- 5. RFID Devices
 -- ────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS rfid_devices (
-  id              CHAR(36) PRIMARY KEY,
-  device_code     VARCHAR(50) NOT NULL UNIQUE,
-  device_name     VARCHAR(255) NOT NULL,
-  location        VARCHAR(255),
-  device_type     ENUM('ENTRY', 'EXIT') NOT NULL,
-  api_key_hash    VARCHAR(255) NOT NULL UNIQUE,
-  status          ENUM('ONLINE', 'OFFLINE', 'WARNING') NOT NULL DEFAULT 'ONLINE',
-  last_seen_at    TIMESTAMP NULL,
-  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS rfid_cards (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  card_uid VARCHAR(100) UNIQUE NOT NULL,
+  status VARCHAR(20) DEFAULT 'ACTIVE',
+  employee_id INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
 );
 
 -- ────────────────────────────────────────────────────────────────

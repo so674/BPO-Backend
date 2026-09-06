@@ -1,19 +1,26 @@
 import mysql from "mysql2/promise";
 import "dotenv/config";
-import dotenv from 'dotenv';
+
+// Capped connection pool for cloud/local execution
+export const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || 'bpo_attendance',
+  waitForConnections: true,
+  connectionLimit: 5,
+  queueLimit: 0,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
 
 // Query helper — matches the shape controllers use: query(sql, params) -> rows
-// mysql2 returns [rows, fields]; we only ever need rows, wrapped to look like { rows }
-// so the rest of the app can stay in a familiar shape.
 export async function query(sql, params = []) {
   const [rows] = await pool.query(sql, params);
   return { rows };
 }
 
-// For operations that must run in a transaction (e.g. event ingestion + attendance
-// update), per Section 12.1: "the application SHOULD use a transaction so that event
-// persistence and the required attendance update cannot leave the database in a
-// partial state." fn receives a client with the same query(sql, params) -> {rows} shape.
+// Transaction wrapper for atomic multi-query updates
 export async function withTransaction(fn) {
   const conn = await pool.getConnection();
   try {
@@ -34,20 +41,6 @@ export async function withTransaction(fn) {
     conn.release();
   }
 }
-dotenv.config();
 
-// Update src/config/db.js to handle cloud SSL connections and limit connection exhaustion during serverless function bursts
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME || 'bpo_attendance',
-  waitForConnections: true,
-  connectionLimit: 5, // Capped low specifically for Vercel serverless execution
-  queueLimit: 0,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
-});
 
 export default pool;

@@ -5,68 +5,79 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth);
 
-// Section 21.2: Monthly report — attendance %, late count, absence count, working-hour summary
-router.get("/monthly", requireRole("HR", "MANAGER", "CEO"), async (req, res) => {
-  const month = req.query.month || new Date().toISOString().slice(0, 7); // YYYY-MM
+const getRows = (result) => {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result.rows)) return result.rows;
+  if (Array.isArray(result[0])) return result[0];
+  return [];
+};
 
-  let sql = `
-    SELECT e.id AS employee_id, CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
-           SUM(CASE WHEN ar.status IN ('PRESENT','LATE','CORRECTED') THEN 1 ELSE 0 END) AS present_days,
-           SUM(CASE WHEN ar.status = 'LATE' THEN 1 ELSE 0 END) AS late_days,
-           SUM(CASE WHEN ar.status = 'ABSENT' THEN 1 ELSE 0 END) AS absent_days,
-           SUM(CASE WHEN ar.status = 'MISSING_PUNCH' THEN 1 ELSE 0 END) AS missing_punch_days,
-           COALESCE(SUM(ar.working_minutes), 0) AS total_working_minutes
-    FROM employees e
-    JOIN attendance_records ar ON ar.employee_id = e.id
-    WHERE DATE_FORMAT(ar.attendance_date, '%Y-%m') = ?
-  `;
-  const params = [month];
+async function handleTeamReport(req, res) {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const role = req.user?.role;
+    const currentUserId = req.user?.id || "";
+    const currentEmpId = req.user?.employeeId || currentUserId;
 
-  if (req.user.role === "MANAGER") {
-    sql += ` AND (e.manager_id = ? OR e.id = ?)`;
-    params.push(req.user.employeeId, req.user.employeeId);
+    let sql = `
+      SELECT 
+        e.id AS employee_id,
+        e.employee_code,
+        CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+        d.name AS department_name,
+        COALESCE(SUM(CASE WHEN ar.status IN ('PRESENT','LATE','CORRECTED') THEN 1 ELSE 0 END), 0) AS present_days,
+        COALESCE(SUM(CASE WHEN ar.status = 'LATE' THEN 1 ELSE 0 END), 0) AS late_days,
+        COALESCE(SUM(CASE WHEN ar.status = 'ABSENT' THEN 1 ELSE 0 END), 0) AS absent_days,
+        COALESCE(SUM(CASE WHEN ar.status = 'MISSING_PUNCH' THEN 1 ELSE 0 END), 0) AS missing_punch_days,
+        COALESCE(SUM(ar.working_minutes), 0) AS total_working_minutes
+      FROM employees e
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN attendance_records ar 
+        ON ar.employee_id = e.id 
+       AND DATE_FORMAT(ar.attendance_date, '%Y-%m') = ?
+    `;
+
+    const params = [month];
+
+    if (role === "MANAGER") {
+      sql += `
+        WHERE e.manager_id = ? 
+           OR e.manager_id = ? 
+           OR e.manager_id IN (SELECT employee_id FROM users WHERE id = ?)
+           OR e.id = ? 
+           OR e.id = ?
+      `;
+      params.push(currentEmpId, currentUserId, currentUserId, currentEmpId, currentUserId);
+    }
+
+    sql += " GROUP BY e.id, e.employee_code, e.first_name, e.last_name, d.name ORDER BY e.first_name ASC";
+
+    const result = await query(sql, params);
+    const rows = getRows(result);
+
+    res.json(
+      rows.map((r) => ({
+        employeeId: r.employee_id,
+        employeeCode: r.employee_code || "—",
+        employeeName: r.employee_name || "Unknown",
+        departmentName: r.department_name || "Unassigned",
+        presentDays: Number(r.present_days || 0),
+        lateDays: Number(r.late_days || 0),
+        absentDays: Number(r.absent_days || 0),
+        missingPunchDays: Number(r.missing_punch_days || 0),
+        totalWorkingMinutes: Number(r.total_working_minutes || 0),
+      }))
+    );
+  } catch (err) {
+    console.error("Team Report Error:", err);
+    res.status(500).json({ error: err.message || "Failed to generate report" });
   }
+}
 
-  sql += " GROUP BY e.id, e.first_name, e.last_name ORDER BY e.first_name";
-
-  const { rows } = await query(sql, params);
-  res.json(
-    rows.map((r) => ({
-      employee_id: r.employee_id,
-      employee_name: r.employee_name,
-      present_days: Number(r.present_days),
-      late_days: Number(r.late_days),
-      absent_days: Number(r.absent_days),
-      missing_punch_days: Number(r.missing_punch_days),
-      total_working_minutes: Number(r.total_working_minutes),
-    })),
-  );
-});
-
-// Section 21.3: Department report — CEO / HR scope
-router.get("/departments", requireRole("HR", "CEO"), async (req, res) => {
-  const date = req.query.date || new Date().toISOString().slice(0, 10);
-
-  const { rows } = await query(
-    `
-    SELECT d.name AS department,
-           SUM(CASE WHEN ar.status IN ('PRESENT','LATE','CORRECTED') THEN 1 ELSE 0 END) AS present,
-           COUNT(*) AS total
-    FROM departments d
-    JOIN employees e ON e.department_id = d.id
-    JOIN attendance_records ar ON ar.employee_id = e.id AND ar.attendance_date = ?
-    GROUP BY d.name
-    ORDER BY d.name
-    `,
-    [date],
-  );
-  res.json(
-    rows.map((r) => {
-      const present = Number(r.present);
-      const total = Number(r.total);
-      return { department: r.department, present, total, rate: total > 0 ? Math.round((present / total) * 100) : 0 };
-    }),
-  );
-});
+router.get("/team", requireRole("HR", "MANAGER", "ADMIN", "CEO"), handleTeamReport);
+router.get("/monthly", requireRole("HR", "MANAGER", "ADMIN", "CEO"), handleTeamReport);
+router.get("/manager", requireRole("HR", "MANAGER", "ADMIN", "CEO"), handleTeamReport);
+router.get("/", requireRole("HR", "MANAGER", "ADMIN", "CEO"), handleTeamReport);
 
 export default router;

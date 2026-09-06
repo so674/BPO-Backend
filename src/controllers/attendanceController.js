@@ -31,19 +31,21 @@ const checkOutSchema = z.object({
 const mapRow = (r) => ({
   id: r.id,
   employeeId: r.employee_id,
-  employeeName: r.employee_name || `${r.first_name || ""} ${r.last_name || ""}`.trim(),
+  employeeName: r.employee_name || `${r.first_name || ""} ${r.last_name || ""}`.trim() || "Unknown",
+  employeeCode: r.employee_code || "—",
+  departmentName: r.department_name || "Unassigned",
   attendanceDate: r.attendance_date,
-  punchIn: r.punch_in,
-  punchOut: r.punch_out,
-  workingMinutes: r.working_minutes,
-  lateMinutes: r.late_minutes,
-  status: r.status,
-  note: r.note,
+  punchIn: r.punch_in ? new Date(r.punch_in).toISOString() : null,
+  punchOut: r.punch_out ? new Date(r.punch_out).toISOString() : null,
+  workingMinutes: r.working_minutes || 0,
+  lateMinutes: r.late_minutes || 0,
+  status: r.status || "PRESENT",
+  note: r.note || "",
 });
 
 // 1. POST /api/attendance/check-in
 export async function checkIn(req, res) {
-  const { role, employeeId: userEmpId } = req.user;
+  const { role, employeeId: userEmpId } = req.user || {};
   const body = checkInSchema.parse(req.body || {});
 
   const targetEmployeeId =
@@ -59,7 +61,6 @@ export async function checkIn(req, res) {
   const punchInTime = body.punchIn ? new Date(body.punchIn) : new Date();
   const formattedPunchIn = toMySQLDateTime(punchInTime);
 
-  // Check if today's record already exists
   const resExisting = await query(
     "SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?",
     [targetEmployeeId, today]
@@ -70,7 +71,6 @@ export async function checkIn(req, res) {
     throw new ApiError(400, "Employee has already checked in for today");
   }
 
-  // Calculate status (LATE if check-in is past 09:15 AM)
   const shiftStart = new Date(punchInTime);
   shiftStart.setHours(9, 15, 0, 0);
 
@@ -102,12 +102,12 @@ export async function checkIn(req, res) {
 
   const resRecord = await query("SELECT * FROM attendance_records WHERE id = ?", [recordId]);
   const rows = getRows(resRecord);
-  res.status(201).json({ record: mapRow(rows[0]) });
+  res.status(201).json(mapRow(rows[0]));
 }
 
 // 2. POST /api/attendance/check-out
 export async function checkOut(req, res) {
-  const { role, employeeId: userEmpId } = req.user;
+  const { role, employeeId: userEmpId } = req.user || {};
   const body = checkOutSchema.parse(req.body || {});
 
   const targetEmployeeId =
@@ -142,18 +142,22 @@ export async function checkOut(req, res) {
 
   const resRecord = await query("SELECT * FROM attendance_records WHERE id = ?", [record.id]);
   const rows = getRows(resRecord);
-  res.json({ record: mapRow(rows[0]) });
+  res.json(mapRow(rows[0]));
 }
 
-// 3. GET /api/attendance
+// 3. GET /api/attendance ( FIX: Returns flat array directly)
 export async function listAttendance(req, res) {
-  const { role, employeeId } = req.user;
+  const { role, employeeId } = req.user || {};
   const { date, from, to } = req.query;
 
   let sql = `
-    SELECT ar.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+    SELECT ar.*, 
+           CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+           e.employee_code,
+           d.name AS department_name
     FROM attendance_records ar
     JOIN employees e ON e.id = ar.employee_id
+    LEFT JOIN departments d ON d.id = e.department_id
   `;
   const conditions = [];
   const params = [];
@@ -179,75 +183,65 @@ export async function listAttendance(req, res) {
 
   const resList = await query(sql, params);
   const rows = getRows(resList);
-  res.json({ records: rows.map(mapRow) });
+  
+  //  Returns flat array directly
+  res.json(rows.map(mapRow));
 }
 
 // 4. GET /api/attendance/today
 export async function getTodayAttendance(req, res) {
-  const { employeeId } = req.user;
+  const { employeeId } = req.user || {};
   const today = new Date().toISOString().slice(0, 10);
 
   const resToday = await query(
-    `SELECT ar.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+    `SELECT ar.*, 
+            CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+            e.employee_code,
+            d.name AS department_name
      FROM attendance_records ar
      JOIN employees e ON e.id = ar.employee_id
+     LEFT JOIN departments d ON d.id = e.department_id
      WHERE ar.employee_id = ? AND ar.attendance_date = ?`,
     [employeeId, today]
   );
   const rows = getRows(resToday);
 
   if (rows.length === 0) {
-    return res.json({ record: null, message: "No attendance recorded for today" });
+    return res.json(null);
   }
 
-  res.json({ record: mapRow(rows[0]) });
+  res.json(mapRow(rows[0]));
 }
 
-// 5. GET /api/attendance/employee/:id
+// 5. GET /api/attendance/employee/:id ( FIX: Returns flat array directly)
 export async function getAttendanceByEmployee(req, res) {
   const { id } = req.params;
-  const { role, employeeId: userEmpId } = req.user;
+  const { role, employeeId: userEmpId } = req.user || {};
 
   if (role === "EMPLOYEE" && id !== userEmpId) {
     throw new ApiError(403, "Access denied: You can only view your own records");
   }
 
   const resEmp = await query(
-    `SELECT ar.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+    `SELECT ar.*, 
+            CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+            e.employee_code,
+            d.name AS department_name
      FROM attendance_records ar
      JOIN employees e ON e.id = ar.employee_id
+     LEFT JOIN departments d ON d.id = e.department_id
      WHERE ar.employee_id = ?
      ORDER BY ar.attendance_date DESC`,
     [id]
   );
   const rows = getRows(resEmp);
 
-  res.json({ records: rows.map(mapRow) });
+  res.json(rows.map(mapRow));
 }
 
-// 6. GET /api/attendance/:id
-export async function getAttendanceById(req, res) {
-  const { id } = req.params;
-
-  const resById = await query(
-    `SELECT ar.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name
-     FROM attendance_records ar
-     JOIN employees e ON e.id = ar.employee_id
-     WHERE ar.id = ?`,
-    [id]
-  );
-  const rows = getRows(resById);
-
-  if (rows.length === 0) {
-    throw new ApiError(404, "Attendance record not found");
-  }
-
-  res.json({ record: mapRow(rows[0]) });
-}
-
-// 7. GET /api/attendance/summary/daily
+// 6. GET /api/attendance/summary/daily & GET /api/attendance/summary
 export async function dailySummary(req, res) {
-  const { role, employeeId } = req.user;
+  const { role, employeeId } = req.user || {};
   const date = req.query.date || new Date().toISOString().slice(0, 10);
 
   let sql = `
@@ -284,5 +278,37 @@ export async function dailySummary(req, res) {
     }
   });
 
-  res.json({ date, summary });
+  res.json({
+    present: summary.PRESENT,
+    late: summary.LATE,
+    absent: summary.ABSENT,
+    onLeave: summary.ON_LEAVE,
+    missingPunch: summary.MISSING_PUNCH,
+    corrected: summary.CORRECTED,
+    date,
+  });
+}
+
+// 7. GET /api/attendance/:id
+export async function getAttendanceById(req, res) {
+  const { id } = req.params;
+
+  const resById = await query(
+    `SELECT ar.*, 
+            CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+            e.employee_code,
+            d.name AS department_name
+     FROM attendance_records ar
+     JOIN employees e ON e.id = ar.employee_id
+     LEFT JOIN departments d ON d.id = e.department_id
+     WHERE ar.id = ?`,
+    [id]
+  );
+  const rows = getRows(resById);
+
+  if (rows.length === 0) {
+    throw new ApiError(404, "Attendance record not found");
+  }
+
+  res.json(mapRow(rows[0]));
 }

@@ -21,6 +21,7 @@ const updateStatusSchema = z.object({
 });
 
 // 1. GET /api/employees - List all employees (supports search & filters)
+// 1. GET /api/employees - List all employees (supports search & filters)
 export async function listEmployees(req, res) {
   const { search, status, role } = req.query;
 
@@ -46,7 +47,9 @@ export async function listEmployees(req, res) {
   sql += " ORDER BY created_at DESC";
 
   const { rows } = await query(sql, params);
-  res.json({ employees: rows });
+  
+  // FIX: Return 'rows' array directly instead of wrapping in an object
+  res.json(rows);
 }
 
 // 2. GET /api/employees/:id - Get employee details by ID

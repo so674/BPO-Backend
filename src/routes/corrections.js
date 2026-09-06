@@ -1,12 +1,21 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { listCorrections, requestCorrection, decideCorrection } from "../controllers/correctionController.js";
+import {
+  listCorrections,
+  requestCorrection,
+  decideCorrection,
+} from "../controllers/correctionController.js";
 
 const router = Router();
-router.use(requireAuth, requireRole("HR"));
 
-router.get("/", listCorrections);
-router.post("/", requestCorrection);
-router.post("/:id/decision", decideCorrection);
+// 1. Require authentication for all correction endpoints
+router.use(requireAuth);
+
+// 2. Allow HR, ADMIN, and CEO to view the list of corrections
+router.get("/", requireRole("HR", "ADMIN", "CEO"), listCorrections);
+
+// 3. Allow HR and ADMIN to request or decide on corrections
+router.post("/", requireRole("HR", "ADMIN"), requestCorrection);
+router.post("/:id/decision", requireRole("HR", "ADMIN"), decideCorrection);
 
 export default router;

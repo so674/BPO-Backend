@@ -18,11 +18,11 @@ import correctionRoutes from "./routes/corrections.js";
 import auditLogRoutes from "./routes/auditLogs.js";
 import leaveOvertimeRoutes from "./routes/leaveOvertimeRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
-import dashboardRoutes from "./routes/dashboardRoutes.js"; // Added Dashboard route import
+import dashboardRoutes from "./routes/dashboardRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
-
+app.disable("etag");
 // Standard Middleware
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:5173" }));
@@ -33,12 +33,10 @@ app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 app.get("/test", (req, res) => res.send("Server is updating correctly!"));
 
-// Master API Route Mounts (Standardized with /api prefix)
-app.use("/api", leaveOvertimeRoutes);
-app.use("/api", reportRoutes);
-app.use("/api", dashboardRoutes); // Mounted /api/dashboard/hr and /api/dashboard/employee
-
+//  1. PUBLIC AUTH ROUTES (MUST BE FIRST)
 app.use("/api/auth", authRoutes);
+
+//  2. SPECIFIC API ENDPOINTS
 app.use("/api/employees", employeeRoutes);
 app.use("/api/departments", departmentRoutes);
 app.use("/api/shifts", shiftRoutes);
@@ -48,6 +46,11 @@ app.use("/api/attendance-events", attendanceEventRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/corrections", correctionRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
+
+//  3. GENERIC /api ROUTE MOUNTS (MUST BE AT THE BOTTOM)
+app.use("/api", leaveOvertimeRoutes);
+app.use("/api", reportRoutes);
+app.use("/api", dashboardRoutes);
 
 // Catch-All 404 Handler (MUST stay at the bottom)
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
