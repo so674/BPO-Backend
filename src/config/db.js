@@ -14,7 +14,14 @@ export const pool = mysql.createPool({
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
 });
 
-// Query helper — matches the shape controllers use: query(sql, params) -> rows
+// Added connectDB to support server startup health checks
+export async function connectDB() {
+  const conn = await pool.getConnection();
+  console.log("Connected to MySQL database successfully");
+  conn.release();
+}
+
+// Query helper — returns { rows } object expected by controllers
 export async function query(sql, params = []) {
   const [rows] = await pool.query(sql, params);
   return { rows };
@@ -41,6 +48,5 @@ export async function withTransaction(fn) {
     conn.release();
   }
 }
-
 
 export default pool;

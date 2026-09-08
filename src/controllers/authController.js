@@ -19,51 +19,68 @@ const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
 
-// 1. POST /api/auth/login
-export async function login(req, res) {
-  const { email, password } = loginSchema.parse(req.body);
-
-  const { rows } = await query("SELECT * FROM users WHERE email = ?", [email]);
-  const user = rows[0];
-
-  // Deliberately vague error so we don't reveal whether the email exists
-  if (!user) throw new ApiError(401, "Invalid email or password");
-
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) throw new ApiError(401, "Invalid email or password");
-
-  if (user.status && user.status !== "ACTIVE") {
-    throw new ApiError(403, "Account is inactive");
+// Helper to safely extract rows array from MySQL result wrapper
+function getRows(result) {
+  if (!result) return [];
+  if (Array.isArray(result)) {
+    // If mysql2 pool.query returns [rows, fields]
+    return Array.isArray(result[0]) ? result[0] : result;
   }
+  return result.rows || [];
+}
 
-  const token = signToken({
-    id: user.id,
-    name: user.name,
-    role: user.role,
-    employeeId: user.employee_id,
-  });
+// 1. POST /api/auth/login
+// 1. POST /api/auth/login
+export async function login(req, res, next) {
+  try {
+    const { email, password } = loginSchema.parse(req.body);
 
-  const refreshToken = signToken(
-    { id: user.id, type: "refresh" },
-    { expiresIn: "7d" }
-  );
+    const dbResult = await query("SELECT * FROM users WHERE email = ?", [email]);
+    const rows = getRows(dbResult);
+    const user = rows[0];
 
-  res.json({
-    token,
-    refreshToken,
-    user: {
+    if (!user) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    if (user.status && user.status !== "ACTIVE") {
+      return res.status(403).json({ message: "Account is inactive" });
+    }
+
+    const token = signToken({
       id: user.id,
       name: user.name,
-      email: user.email,
       role: user.role,
       employeeId: user.employee_id,
-    },
-  });
+    });
+
+    const refreshToken = signToken(
+      { id: user.id, type: "refresh" },
+      { expiresIn: "7d" }
+    );
+
+    return res.json({
+      token,
+      refreshToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        employeeId: user.employee_id,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Login failed" });
+  }
 }
 
 // 2. GET /api/auth/me
-// Returns the currently authenticated user — useful for the frontend to
-// restore a session on page reload from a stored token.
 export async function me(req, res) {
   if (!req.user) {
     throw new ApiError(401, "Unauthenticated");
@@ -73,7 +90,6 @@ export async function me(req, res) {
 
 // 3. POST /api/auth/logout
 export async function logout(req, res) {
-  // Statetess JWT logout confirmation
   res.json({ message: "Logged out successfully" });
 }
 
@@ -86,7 +102,8 @@ export async function refreshToken(req, res) {
     throw new ApiError(401, "Invalid or expired refresh token");
   }
 
-  const { rows } = await query("SELECT * FROM users WHERE id = ?", [decoded.id]);
+  const dbResult = await query("SELECT * FROM users WHERE id = ?", [decoded.id]);
+  const rows = getRows(dbResult);
   const user = rows[0];
 
   if (!user || (user.status && user.status !== "ACTIVE")) {
@@ -108,7 +125,8 @@ export async function changePassword(req, res) {
   const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
   const userId = req.user.id;
 
-  const { rows } = await query("SELECT * FROM users WHERE id = ?", [userId]);
+  const dbResult = await query("SELECT * FROM users WHERE id = ?", [userId]);
+  const rows = getRows(dbResult);
   const user = rows[0];
 
   if (!user) throw new ApiError(404, "User not found");

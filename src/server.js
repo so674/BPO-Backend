@@ -1,30 +1,22 @@
 import "dotenv/config";
 import app from "./app.js";
-import pool from "./config/db.js";
-// import leaveOvertimeRoutes from "./routes/leaveOvertimeRoutes.js";
-// import reportRoutes from "./routes/reportRoutes.js";
+import { connectDB } from "./config/db.js";
 
 const PORT = process.env.PORT || 4000;
 
-async function checkDatabaseConnection() {
+async function startServer() {
   try {
-    const connection = await pool.getConnection();
-    await connection.ping();
-    connection.release();
-    console.log("Database connection: CONNECTED");
-    return true;
+    // 1. Verify Database Connection
+    await connectDB();
+
+    // 2. Start Express Server (Single Listener)
+    app.listen(PORT, () => {
+      console.log(`BPO Attendance API running on http://localhost:${PORT}`);
+    });
   } catch (err) {
-    console.error("Database connection: FAILED");
-    console.error("Error details:", err.message);
-    return false;
+    console.error("Failed to start server:", err.message);
+    process.exit(1);
   }
 }
 
-// Mount API routes (MUST be above app.listen)
-// app.use("/api", leaveOvertimeRoutes);
-// app.use("/api", reportRoutes);
-
-app.listen(PORT, async () => {
-  console.log(`BPO Attendance API running on http://localhost:${PORT}`);
-  await checkDatabaseConnection();
-});
+startServer();

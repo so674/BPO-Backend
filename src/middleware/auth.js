@@ -18,12 +18,22 @@ export function requireAuth(req, res, next) {
 }
 
 // Restricts a route to a set of roles, e.g. requireRole("HR")
-export function requireRole(...allowedRoles) {
+export function requireRole(...roles) {
   return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-    if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ error: "You do not have permission to perform this action" });
+    if (!req.user) {
+      return res.status(401).json({ message: "Unauthorized: Authentication required" });
     }
+
+    // Flatten array in case an array was passed: requireRole(["HR", "ADMIN"])
+    const allowedRoles = roles.flat().map((r) => String(r).toUpperCase());
+    const userRole = String(req.user.role || "").toUpperCase();
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({ 
+        message: `Forbidden: Access denied for role '${req.user.role}'` 
+      });
+    }
+
     next();
   };
 }

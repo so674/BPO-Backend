@@ -1,11 +1,12 @@
 import { query } from "../config/db.js";
 
+// Safe helper to extract rows from MySQL result arrays
 const getRows = (result) => {
   if (!result) return [];
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result.rows)) return result.rows;
-  if (Array.isArray(result[0])) return result[0];
-  return [];
+  if (Array.isArray(result)) {
+    return Array.isArray(result[0]) ? result[0] : result;
+  }
+  return result.rows || [];
 };
 
 // Utility: Convert JSON array to CSV format
@@ -52,6 +53,7 @@ export async function getDailyReport(req, res) {
   try {
     const { date } = req.query;
     const { role, employeeId } = req.user || {};
+    const userRole = String(role || "").toUpperCase();
     const targetDate = date || new Date().toISOString().split("T")[0];
 
     let sql = `
@@ -71,8 +73,7 @@ export async function getDailyReport(req, res) {
     const conditions = [];
     const params = [targetDate];
 
-    // Filter by team if requested by a Manager
-    if (role === "MANAGER") {
+    if (userRole === "MANAGER") {
       conditions.push("(e.manager_id = ? OR e.id = ?)");
       params.push(employeeId, employeeId);
     }
@@ -86,7 +87,6 @@ export async function getDailyReport(req, res) {
     const result = await query(sql, params);
     const rows = getRows(result);
 
-    // 🟢 Returns flat array directly
     res.json(rows.map(mapDailyRow));
   } catch (err) {
     console.error("Daily Report Error:", err);
@@ -99,8 +99,17 @@ export async function getMonthlySummary(req, res) {
   try {
     const { month, year } = req.query;
     const { role, employeeId } = req.user || {};
-    const currentYear = Number(year) || new Date().getFullYear();
-    const currentMonth = Number(month) || new Date().getMonth() + 1;
+    const userRole = String(role || "").toUpperCase();
+
+    let currentYear = Number(year) || new Date().getFullYear();
+    let currentMonth = Number(month) || new Date().getMonth() + 1;
+
+    // FIX 1: Parse "2026-09" string passed in req.query.month
+    if (typeof month === "string" && month.includes("-")) {
+      const parts = month.split("-");
+      currentYear = Number(parts[0]) || currentYear;
+      currentMonth = Number(parts[1]) || currentMonth;
+    }
 
     let sql = `
       SELECT 
@@ -121,8 +130,7 @@ export async function getMonthlySummary(req, res) {
     const conditions = [];
     const params = [currentMonth, currentYear];
 
-    // Filter by team if requested by a Manager
-    if (role === "MANAGER") {
+    if (userRole === "MANAGER") {
       conditions.push("(e.manager_id = ? OR e.id = ?)");
       params.push(employeeId, employeeId);
     }
@@ -136,7 +144,6 @@ export async function getMonthlySummary(req, res) {
     const result = await query(sql, params);
     const rows = getRows(result);
 
-    // 🟢 Returns flat array directly
     res.json(rows.map(mapMonthlyRow));
   } catch (err) {
     console.error("Monthly Summary Error:", err);
@@ -144,11 +151,21 @@ export async function getMonthlySummary(req, res) {
   }
 }
 
-// 3. GET /api/reports/export - Export CSV
+// 3. GET /api/reports/team - Smart Router for Team Reports
+export async function getTeamReport(req, res) {
+  // FIX 2: Route to Monthly Summary if 'month' is supplied, otherwise route to Daily Report
+  if (req.query.month) {
+    return getMonthlySummary(req, res);
+  }
+  return getDailyReport(req, res);
+}
+
+// 4. GET /api/reports/export - Export CSV
 export async function exportCsvReport(req, res) {
   try {
     const { date } = req.query;
     const { role, employeeId } = req.user || {};
+    const userRole = String(role || "").toUpperCase();
     const targetDate = date || new Date().toISOString().split("T")[0];
 
     let sql = `
@@ -168,7 +185,7 @@ export async function exportCsvReport(req, res) {
     const conditions = [];
     const params = [targetDate];
 
-    if (role === "MANAGER") {
+    if (userRole === "MANAGER") {
       conditions.push("(e.manager_id = ? OR e.id = ?)");
       params.push(employeeId, employeeId);
     }
@@ -191,3 +208,24 @@ export async function exportCsvReport(req, res) {
     res.status(500).json({ error: err.message || "Failed to export CSV report" });
   }
 }
+  // GET /api/reports/departments - Department Summary
+ export async function getDepartmentReport(req, res) {
+  try {
+    const sql = `
+      SELECT 
+        d.id,
+        d.name,
+        COUNT(e.id) AS total_employees
+      FROM departments d
+      LEFT JOIN employees e ON e.department_id = d.id
+      GROUP BY d.id, d.name
+    `;
+    const result = await query(sql);
+    const rows = getRows(result);
+    res.json(rows);
+  } catch (err) {
+    console.error("Department Report Error:", err);
+    res.status(500).json({ error: err.message || "Failed to fetch department report" });
+  }
+}
+

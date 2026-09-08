@@ -1,5 +1,5 @@
 import express from "express";
-import "express-async-errors"; // lets async route handlers throw and hit errorHandler
+import "express-async-errors";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -19,10 +19,12 @@ import auditLogRoutes from "./routes/auditLogs.js";
 import leaveOvertimeRoutes from "./routes/leaveOvertimeRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import rfidRoutes from "./routes/rfid.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
 app.disable("etag");
+
 // Standard Middleware
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:5173" }));
@@ -33,10 +35,10 @@ app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 app.get("/test", (req, res) => res.send("Server is updating correctly!"));
 
-//  1. PUBLIC AUTH ROUTES (MUST BE FIRST)
+// 1. PUBLIC AUTH ROUTES
 app.use("/api/auth", authRoutes);
 
-//  2. SPECIFIC API ENDPOINTS
+// 2. SPECIFIC API ENDPOINTS
 app.use("/api/employees", employeeRoutes);
 app.use("/api/departments", departmentRoutes);
 app.use("/api/shifts", shiftRoutes);
@@ -46,16 +48,18 @@ app.use("/api/attendance-events", attendanceEventRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/corrections", correctionRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/rfid", rfidRoutes);
+app.use("/api/reports", reportRoutes);
 
-//  3. GENERIC /api ROUTE MOUNTS (MUST BE AT THE BOTTOM)
+// 3. GENERIC API ROUTES
 app.use("/api", leaveOvertimeRoutes);
-app.use("/api", reportRoutes);
 app.use("/api", dashboardRoutes);
 
-// Catch-All 404 Handler (MUST stay at the bottom)
+// Catch-All 404 Handler
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 
-// Global Error Handler (MUST be the absolute last middleware)
+// Global Error Handler
 app.use(errorHandler);
 
+// Default Export (Required for server.js)
 export default app;

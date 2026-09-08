@@ -1,18 +1,22 @@
 import { Router } from "express";
-import { requireAuth, requireRole } from "../middleware/auth.js";
-import {
-  getDailyReport,
-  getMonthlySummary,
+import { requireAuth } from "../middleware/auth.js";
+import { 
+  getTeamReport, 
+  getDailyReport, 
+  getMonthlySummary, 
   exportCsvReport,
+  getDepartmentReport
 } from "../controllers/reportController.js";
 
 const router = Router();
 
 router.use(requireAuth);
-router.use(requireRole("HR", "CEO", "ADMIN", "MANAGER"));
 
-router.get("/reports/daily", getDailyReport);
-router.get("/reports/monthly", getMonthlySummary);
-router.get("/reports/export", exportCsvReport);
+// Correct: relative paths to /api/reports
+router.get("/team", getTeamReport);        // Endpoint: /api/reports/team
+router.get("/daily", getDailyReport);      // Endpoint: /api/reports/daily
+router.get("/monthly", getMonthlySummary);  // Endpoint: /api/reports/monthly
+router.get("/export", exportCsvReport);    // Endpoint: /api/reports/export
+router.get("/departments", getDepartmentReport);
 
 export default router;
