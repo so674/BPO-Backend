@@ -6,32 +6,57 @@ import { ApiError } from "../middleware/errorHandler.js";
 
 // Validation Schemas
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1),
+  currentPassword: z.string().min(1, "Current password is required"),
   newPassword: z.string().min(6, "New password must be at least 6 characters"),
 });
 
 const refreshSchema = z.object({
-  refreshToken: z.string().min(1),
+  refreshToken: z.string().min(1, "Refresh token is required"),
 });
 
-// Helper to safely extract rows array from MySQL result wrapper
+/**
+ * Helper to safely extract rows array from MySQL result wrapper
+ * @param {object|array} result - Database query result
+ * @returns {array} Array of row objects
+ */
 function getRows(result) {
   if (!result) return [];
   if (Array.isArray(result)) {
-    // If mysql2 pool.query returns [rows, fields]
     return Array.isArray(result[0]) ? result[0] : result;
   }
   return result.rows || [];
 }
 
-// 1. POST /api/auth/login
-// 1. POST /api/auth/login
-export async function login(req, res, next) {
+/**
+ * Helper to handle validation and operational errors securely without leaking sensitive info
+ * @param {Error} error - Caught error object
+ * @param {object} res - Express response object
+ * @returns {object} Express JSON response
+ */
+function handleAuthError(error, res) {
+  if (error instanceof z.ZodError) {
+    const issue = error.issues[0];
+    return res.status(400).json({ error: issue ? issue.message : "Invalid input payload" });
+  }
+
+  if (error instanceof ApiError) {
+    return res.status(error.statusCode || 400).json({ error: error.message });
+  }
+
+  console.error("[AUTH ERROR]:", error.message);
+  return res.status(500).json({ error: "Authentication processing failed" });
+}
+
+/**
+ * POST /api/auth/login
+ * Authenticates user credentials and issues JWT access and refresh tokens.
+ */
+export async function login(req, res) {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
@@ -39,17 +64,18 @@ export async function login(req, res, next) {
     const rows = getRows(dbResult);
     const user = rows[0];
 
+    // Generic error response prevents account enumeration attacks
     if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
     if (user.status && user.status !== "ACTIVE") {
-      return res.status(403).json({ message: "Account is inactive" });
+      return res.status(403).json({ error: "Account is inactive" });
     }
 
     const token = signToken({
@@ -76,66 +102,98 @@ export async function login(req, res, next) {
       },
     });
   } catch (error) {
-    return res.status(400).json({ message: error.message || "Login failed" });
+    return handleAuthError(error, res);
   }
 }
 
-// 2. GET /api/auth/me
+/**
+ * GET /api/auth/me
+ * Retrieves current authenticated user profile.
+ */
 export async function me(req, res) {
-  if (!req.user) {
-    throw new ApiError(401, "Unauthenticated");
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthenticated" });
+    }
+    return res.json({ user: req.user });
+  } catch (error) {
+    return handleAuthError(error, res);
   }
-  res.json({ user: req.user });
 }
 
-// 3. POST /api/auth/logout
+/**
+ * POST /api/auth/logout
+ * Clears authentication state on the client side.
+ */
 export async function logout(req, res) {
-  res.json({ message: "Logged out successfully" });
+  return res.json({ message: "Logged out successfully" });
 }
 
-// 4. POST /api/auth/refresh
+/**
+ * POST /api/auth/refresh
+ * Generates a new access token using a valid refresh token.
+ */
 export async function refreshToken(req, res) {
-  const { refreshToken } = refreshSchema.parse(req.body);
+  try {
+    const { refreshToken: tokenInput } = refreshSchema.parse(req.body);
 
-  const decoded = verifyToken(refreshToken);
-  if (!decoded || decoded.type !== "refresh") {
-    throw new ApiError(401, "Invalid or expired refresh token");
+    const decoded = verifyToken(tokenInput);
+    if (!decoded || decoded.type !== "refresh") {
+      return res.status(401).json({ error: "Invalid or expired refresh token" });
+    }
+
+    const dbResult = await query("SELECT * FROM users WHERE id = ?", [decoded.id]);
+    const rows = getRows(dbResult);
+    const user = rows[0];
+
+    if (!user || (user.status && user.status !== "ACTIVE")) {
+      return res.status(401).json({ error: "User no longer active or exists" });
+    }
+
+    const newToken = signToken({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      employeeId: user.employee_id,
+    });
+
+    return res.json({ token: newToken });
+  } catch (error) {
+    return handleAuthError(error, res);
   }
-
-  const dbResult = await query("SELECT * FROM users WHERE id = ?", [decoded.id]);
-  const rows = getRows(dbResult);
-  const user = rows[0];
-
-  if (!user || (user.status && user.status !== "ACTIVE")) {
-    throw new ApiError(401, "User no longer active or exists");
-  }
-
-  const newToken = signToken({
-    id: user.id,
-    name: user.name,
-    role: user.role,
-    employeeId: user.employee_id,
-  });
-
-  res.json({ token: newToken });
 }
 
-// 5. POST /api/auth/change-password
+/**
+ * POST /api/auth/change-password
+ * Updates password hash for currently authenticated user.
+ */
 export async function changePassword(req, res) {
-  const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
-  const userId = req.user.id;
+  try {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+    const userId = req.user?.id;
 
-  const dbResult = await query("SELECT * FROM users WHERE id = ?", [userId]);
-  const rows = getRows(dbResult);
-  const user = rows[0];
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthenticated" });
+    }
 
-  if (!user) throw new ApiError(404, "User not found");
+    const dbResult = await query("SELECT * FROM users WHERE id = ?", [userId]);
+    const rows = getRows(dbResult);
+    const user = rows[0];
 
-  const valid = await bcrypt.compare(currentPassword, user.password_hash);
-  if (!valid) throw new ApiError(400, "Incorrect current password");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
-  const newHash = await bcrypt.hash(newPassword, 10);
-  await query("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, userId]);
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!valid) {
+      return res.status(400).json({ error: "Incorrect current password" });
+    }
 
-  res.json({ message: "Password updated successfully" });
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await query("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, userId]);
+
+    return res.json({ message: "Password updated successfully" });
+  } catch (error) {
+    return handleAuthError(error, res);
+  }
 }
